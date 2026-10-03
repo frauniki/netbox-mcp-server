@@ -358,10 +358,7 @@ def netbox_get_objects(
     """
     Get objects from NetBox based on their type and filters
     """
-    # Validate object_type exists in mapping
-    if object_type not in NETBOX_OBJECT_TYPES:
-        valid_types = "\n".join(f"- {t}" for t in sorted(NETBOX_OBJECT_TYPES.keys()))
-        raise ValueError(f"Invalid object_type. Must be one of:\n{valid_types}")
+    _validate_object_type(object_type)
 
     # Validate filter patterns
     validate_filters(filters)
@@ -423,10 +420,7 @@ def netbox_get_object_by_id(
     Returns:
         Object dict (complete or with only requested fields based on fields parameter)
     """
-    # Validate object_type exists in mapping
-    if object_type not in NETBOX_OBJECT_TYPES:
-        valid_types = "\n".join(f"- {t}" for t in sorted(NETBOX_OBJECT_TYPES.keys()))
-        raise ValueError(f"Invalid object_type. Must be one of:\n{valid_types}")
+    _validate_object_type(object_type)
 
     # Get API endpoint and fallback from mapping
     endpoint, fallback = _get_endpoint_info(object_type)
@@ -568,9 +562,7 @@ def netbox_search_objects(
 
     # Validate all object types exist in mapping
     for obj_type in search_types:
-        if obj_type not in NETBOX_OBJECT_TYPES:
-            valid_types = "\n".join(f"- {t}" for t in sorted(NETBOX_OBJECT_TYPES.keys()))
-            raise ValueError(f"Invalid object_type '{obj_type}'. Must be one of:\n{valid_types}")
+        _validate_object_type(obj_type)
 
     results = {obj_type: [] for obj_type in search_types}
 
@@ -595,6 +587,144 @@ def netbox_search_objects(
             continue
 
     return results
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+def netbox_create_object(object_type: str, data: dict) -> dict:
+    """
+    Create a new object in NetBox.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "dcim.site", "ipam.ipaddress")
+        data: Field values for the new object, as accepted by the NetBox REST API.
+              Related objects are referenced by numeric ID.
+
+              Examples:
+              - dcim.site: {"name": "NYC-DC1", "slug": "nyc-dc1", "status": "active"}
+              - ipam.ipaddress: {"address": "192.0.2.10/24", "status": "active"}
+              - dcim.device: {"name": "sw01", "device_type": 3, "role": 1, "site": 2}
+
+    Returns:
+        The created object dict (including its new "id")
+    """
+    _validate_object_type(object_type)
+    endpoint, _ = _get_endpoint_info(object_type)
+    return netbox.create(endpoint, data)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def netbox_update_object(object_type: str, object_id: int, data: dict) -> dict:
+    """
+    Partially update an existing NetBox object (HTTP PATCH).
+
+    Only the fields present in data are changed; all other fields are left as-is.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "dcim.device")
+        object_id: The numeric ID of the object to update
+        data: Fields to change. Related objects are referenced by numeric ID.
+              Example: {"status": "offline", "description": "Decommissioned"}
+
+    Returns:
+        The updated object dict
+    """
+    _validate_object_type(object_type)
+    endpoint, _ = _get_endpoint_info(object_type)
+    return netbox.update(endpoint, object_id, data)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def netbox_delete_object(object_type: str, object_id: int) -> dict:
+    """
+    Delete a NetBox object. This cannot be undone.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "dcim.device")
+        object_id: The numeric ID of the object to delete
+
+    Returns:
+        {"deleted": True} on success
+    """
+    _validate_object_type(object_type)
+    endpoint, _ = _get_endpoint_info(object_type)
+    return {"deleted": netbox.delete(endpoint, object_id)}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+def netbox_bulk_create_objects(object_type: str, data: list[dict]) -> list[dict]:
+    """
+    Create multiple objects of the same type in NetBox in a single request.
+
+    NetBox applies the request atomically: if any object fails validation,
+    none are created.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "ipam.vlan")
+        data: List of field-value dicts, one per new object.
+              Example: [{"vid": 100, "name": "users"}, {"vid": 200, "name": "voice"}]
+
+    Returns:
+        List of created object dicts
+    """
+    _validate_object_type(object_type)
+    endpoint, _ = _get_endpoint_info(object_type)
+    return netbox.bulk_create(endpoint, data)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def netbox_bulk_update_objects(object_type: str, data: list[dict]) -> list[dict]:
+    """
+    Partially update multiple objects of the same type in a single request (HTTP PATCH).
+
+    Each dict must include the object's "id" plus the fields to change.
+    NetBox applies the request atomically.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "dcim.interface")
+        data: List of dicts, each with "id" and the fields to change.
+              Example: [{"id": 10, "enabled": False}, {"id": 11, "enabled": False}]
+
+    Returns:
+        List of updated object dicts
+    """
+    _validate_object_type(object_type)
+    missing = [i for i, item in enumerate(data) if "id" not in item]
+    if missing:
+        raise ValueError(f"Every item must include 'id'; missing at index {missing}")
+    endpoint, _ = _get_endpoint_info(object_type)
+    return netbox.bulk_update(endpoint, data)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True})
+def netbox_bulk_delete_objects(object_type: str, object_ids: list[int]) -> dict:
+    """
+    Delete multiple objects of the same type in a single request. This cannot be undone.
+
+    Args:
+        object_type: String representing the NetBox object type (e.g. "ipam.ipaddress")
+        object_ids: Numeric IDs of the objects to delete
+
+    Returns:
+        {"deleted": True} on success
+    """
+    _validate_object_type(object_type)
+    endpoint, _ = _get_endpoint_info(object_type)
+    return {"deleted": netbox.bulk_delete(endpoint, object_ids)}
+
+
+def _validate_object_type(object_type: str) -> None:
+    """
+    Raise ValueError if object_type is not in NETBOX_OBJECT_TYPES.
+
+    Args:
+        object_type: The NetBox object type (e.g., "dcim.device")
+
+    Raises:
+        ValueError: If the object type is unknown, listing the valid types
+    """
+    if object_type not in NETBOX_OBJECT_TYPES:
+        valid_types = "\n".join(f"- {t}" for t in sorted(NETBOX_OBJECT_TYPES.keys()))
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of:\n{valid_types}")
 
 
 def _get_endpoint_info(object_type: str) -> tuple[str, str | None]:

@@ -7,9 +7,9 @@
 > - Docker users: rebuild images with updated CMD
 > - See [CHANGELOG.md](CHANGELOG.md) for full details
 
-This is a simple read-only [Model Context Protocol](https://modelcontextprotocol.io/) server for NetBox. It enables you to interact with your data in NetBox directly via LLMs that support MCP.
+This is a simple [Model Context Protocol](https://modelcontextprotocol.io/) server for NetBox. It enables you to read and modify your data in NetBox directly via LLMs that support MCP.
 
-The server is intentionally simple: easy to get started with, hard to misuse (read-only by default, no plugin surface), and easy to fork and adapt. Forking under Apache 2.0 is a first-class path for users who need capabilities beyond the project's scope.
+The server is intentionally simple: easy to get started with, hard to misuse (write access is governed by the NetBox token's permissions, no plugin surface), and easy to fork and adapt. Forking under Apache 2.0 is a first-class path for users who need capabilities beyond the project's scope.
 
 ## Community
 
@@ -22,12 +22,21 @@ For chat, use cases, and general MCP discussion, join the NetBox community at [n
 | get_objects | Retrieves NetBox core objects based on their type and filters |
 | get_object_by_id | Gets detailed information about a specific NetBox object by its ID |
 | get_changelogs | Retrieves change history records (audit trail) based on filters |
+| search_objects | Global search across multiple object types |
+| create_object | Creates an object |
+| update_object | Partially updates an object (PATCH) |
+| delete_object | Deletes an object |
+| bulk_create_objects | Creates multiple objects of one type in a single request |
+| bulk_update_objects | Partially updates multiple objects of one type (each item needs `id`) |
+| bulk_delete_objects | Deletes multiple objects of one type by ID |
+
+> **Write access:** Write tools are always registered. Whether they succeed is decided by the permissions of `NETBOX_TOKEN`. Use a read-only token if the LLM must not change data. See [Write Operations](#write-operations).
 
 > Note: Core NetBox object types are always available. Plugin object types can be auto-discovered. See [Plugin Object Type Discovery](#plugin-object-type-discovery). Advanced features (GraphQL, dynamic model discovery, etc.) are deliberately out of scope. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full scope statement and rationale.
 
 ## Usage
 
-1. Create a read-only API token in NetBox with sufficient permissions for the tool to access the data you want to make available via MCP.
+1. Create an API token in NetBox with the permissions you want the LLM to have. Use a read-only token for read-only access, or grant write permissions on the object types the LLM may change.
 
 2. Install dependencies:
 
@@ -156,6 +165,23 @@ devices = netbox_get_objects(
 - **Sites:** `['id', 'name', 'status', 'region', 'description']`
 
 The `fields` parameter uses NetBox's native field filtering. See the [NetBox API documentation](https://docs.netbox.dev/en/stable/integrations/rest-api/) for details.
+
+## Write Operations
+
+The create, update and delete tools call the NetBox REST API directly (`POST`, `PATCH`, `DELETE`, and the `bulk/` variants). Related objects are referenced by numeric ID:
+
+```python
+netbox_create_object('dcim.site', {'name': 'NYC-DC1', 'slug': 'nyc-dc1', 'status': 'active'})
+netbox_update_object('dcim.device', 42, {'status': 'offline'})
+netbox_bulk_update_objects('dcim.interface', [{'id': 10, 'enabled': False}, {'id': 11, 'enabled': False}])
+```
+
+Security notes:
+
+- **The NetBox token is the only write guard.** Scope its permissions to the object types and actions the LLM should be allowed to change. NetBox records every change in the changelog under the token's user.
+- **Delete and update tools are marked destructive** via MCP tool annotations (`destructiveHint`), so clients that honor them can ask for confirmation.
+- **Protect the HTTP transport.** With `TRANSPORT=http`, anyone who can reach the endpoint can write to NetBox. Set `MCP_AUTH_TOKEN` or put the server behind an authenticating proxy.
+- Bulk requests are atomic in NetBox: if one item fails validation, none are applied.
 
 ## Configuration
 
@@ -386,7 +412,7 @@ uv run netbox-mcp-server --enable-plugin-discovery
 
 At startup, the server queries NetBox's `core/object-types` API endpoint (with `extras/object-types` fallback for NetBox < 4.4) to find all installed plugin models that have REST API endpoints. These are merged into the runtime type registry alongside the core types.
 
-Discovered plugin types use the `app_label.model` naming convention (e.g., `netbox_dns.zone`, `netbox_inventory.asset`) and work with all existing tools (`netbox_get_objects`, `netbox_get_object_by_id`, `netbox_search_objects`).
+Discovered plugin types use the `app_label.model` naming convention (e.g., `netbox_dns.zone`, `netbox_inventory.asset`) and work with all existing tools, including the write tools.
 
 ### Requirements
 

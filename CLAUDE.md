@@ -2,7 +2,7 @@
 
 ## Core Concept
 
-A read-only [Model Context Protocol](https://modelcontextprotocol.io/) server that enables LLMs to interact with NetBox infrastructure data. Built with FastMCP and designed for use by NetBox operators.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server that enables LLMs to read and modify NetBox infrastructure data. This fork adds write tools (create/update/delete, single and bulk) on top of the upstream read-only server. Built with FastMCP and designed for use by NetBox operators.
 
 **Your role**: Help contributors design and implement features within the project's stated scope (see [CONTRIBUTING.md](CONTRIBUTING.md)). Challenge proposals that fall outside scope before implementation begins, not after. Ask clarifying questions and challenge assumptions when needed.
 
@@ -130,7 +130,7 @@ def get_stuff(t, f):
 ### Architecture Patterns
 
 - **Abstraction layer**: `NetBoxClientBase` defines interface for future ORM implementation
-- **Read-only by design**: Only GET operations exposed; no create/update/delete tools
+- **Token-scoped writes**: Write tools are always registered; the NetBox token's permissions are the only write guard. Mark tools with MCP `annotations` (`readOnlyHint`, `destructiveHint`)
 - **Environment-based config**: All secrets via environment variables, never hardcoded
 - **Explicit object mapping**: `NETBOX_OBJECT_TYPES` dictionary maintains allowed types
 
@@ -167,12 +167,12 @@ See `NETBOX_OBJECT_TYPES` in `server.py` for complete list.
 ## Environment Variables
 
 - `NETBOX_URL`: Base URL of NetBox instance (e.g., `https://netbox.example.com/`)
-- `NETBOX_TOKEN`: Read-only API token with appropriate permissions
+- `NETBOX_TOKEN`: API token; its permissions decide what the write tools can change
 - `LOG_LEVEL`: Logging verbosity (default: `INFO`, options: `DEBUG`, `WARNING`, `ERROR`)
 
 ## Security Considerations
 
-- **Read-only tokens**: Always use read-only API tokens with minimal required permissions
+- **Least-privilege tokens**: Grant only the write permissions the LLM needs; use a read-only token for read-only deployments
 - **No credential storage**: Tokens passed via environment, never stored or logged
 - **SSL verification**: Enabled by default in REST client
 - **No plugin support**: Deliberately excludes plugin object types to limit attack surface
@@ -197,7 +197,6 @@ Currently no automated test suite. When adding tests:
 
 ### Code Quality
 
-- ❌ Add write operations (create/update/delete) without explicit project maintainer approval
 - ❌ Add support for plugin object types (scope limited to core NetBox)
 - ❌ Hardcode credentials or NetBox URLs
 - ❌ Bypass the `NetBoxClientBase` abstraction
@@ -296,13 +295,11 @@ Currently no automated test suite. When adding tests:
 
 - Exposes core NetBox functionality not currently accessible
 - Has clear use case for LLM-driven queries
-- Maintains read-only contract
 - Follows existing tool patterns
 
 ❌ **Don't add if**:
 
 - Duplicates existing tool functionality
-- Requires write operations
 - Only benefits niche use cases
 - Adds complexity without clear value
 
